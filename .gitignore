@@ -1,0 +1,14 @@
+node_modules
+dist
+.env
+.env.local
+npm-debug.log*
+yarn-error.log*
+.DS_Store
+# Python
+__pycache__/
+*.pyc
+
+# Database
+*.db
+
