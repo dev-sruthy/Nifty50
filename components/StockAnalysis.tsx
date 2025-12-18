@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Search } from 'lucide-react';
 import { NIFTY_50_STOCKS, generateHistoricalData } from '../constants';
 import { Stock } from '../types';
@@ -7,13 +7,50 @@ import StockChart from './StockChart';
 const StockAnalysis = () => {
   const [selectedSymbol, setSelectedSymbol] = useState<string>(NIFTY_50_STOCKS[0].symbol);
   const [searchTerm, setSearchTerm] = useState('');
+  const [livePrice, setLivePrice] = useState<number | null>(null);
+  const [liveChange, setLiveChange] = useState<number | null>(null);
+  const [liveChangePercent, setLiveChangePercent] = useState<number | null>(null);
+
+  const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000';
 
   const selectedStock = NIFTY_50_STOCKS.find(s => s.symbol === selectedSymbol) || NIFTY_50_STOCKS[0];
+
+  // Fetch live quote whenever selected symbol changes
+  useEffect(() => {
+    let cancelled = false;
+
+    const fetchQuote = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/quote/${selectedSymbol}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        setLivePrice(data.price ?? null);
+        setLiveChange(data.change ?? null);
+        setLiveChangePercent(data.change_percent ?? null);
+      } catch {
+        if (!cancelled) {
+          setLivePrice(null);
+          setLiveChange(null);
+          setLiveChangePercent(null);
+        }
+      }
+    };
+
+    fetchQuote();
+
+    const id = setInterval(fetchQuote, 60_000); // refresh every 60s
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [API_BASE, selectedSymbol]);
   
   // Memoize historical data so it doesn't regenerate on every render, only when stock changes
   const historicalData = useMemo(() => {
-    return generateHistoricalData(selectedStock.currentPrice);
-  }, [selectedStock]);
+    const base = livePrice ?? selectedStock.currentPrice;
+    return generateHistoricalData(base);
+  }, [selectedStock, livePrice]);
 
   const filteredStocks = NIFTY_50_STOCKS.filter(s => 
     s.symbol.toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -73,9 +110,16 @@ const StockAnalysis = () => {
               </div>
            </div>
            <div className="text-right">
-              <div className="text-4xl font-bold font-mono text-white">₹{selectedStock.currentPrice.toLocaleString()}</div>
-              <div className={`text-sm font-medium ${selectedStock.changePercent >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                 {selectedStock.change > 0 ? '+' : ''}{selectedStock.change} ({selectedStock.changePercent}%)
+              <div className="text-4xl font-bold font-mono text-white">
+                ₹{(livePrice ?? selectedStock.currentPrice).toLocaleString()}
+              </div>
+              <div
+                className={`text-sm font-medium ${
+                  (liveChangePercent ?? selectedStock.changePercent) >= 0 ? 'text-emerald-400' : 'text-red-400'
+                }`}
+              >
+                {(liveChange ?? selectedStock.change) > 0 ? '+' : ''}
+                {(liveChange ?? selectedStock.change)} ({liveChangePercent ?? selectedStock.changePercent}%)
               </div>
            </div>
         </div>

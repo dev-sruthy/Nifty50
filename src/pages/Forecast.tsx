@@ -10,6 +10,7 @@ import {
   Legend,
 } from "recharts";
 import { RefreshCw, TrendingUp, AlertCircle } from "lucide-react";
+import { NIFTY_50_STOCKS } from "../../constants";
 
 const Forecast: React.FC = () => {
   const [symbol, setSymbol] = useState("NIFTY");
@@ -53,10 +54,22 @@ const Forecast: React.FC = () => {
 
   // Prepare chart data (Recharts format)
   const chartData =
-    data?.dates.map((date: string, i: number) => ({
-      date,
-      price: data.prices[i],
-    })) || [];
+    data
+      ? [
+          // Historical section
+          ...(data.history_dates || []).map((date: string, i: number) => ({
+            date,
+            actual: data.history_prices?.[i],
+            forecast: null,
+          })),
+          // Forecast section
+          ...(data.dates || []).map((date: string, i: number) => ({
+            date,
+            actual: null,
+            forecast: data.prices?.[i],
+          })),
+        ]
+      : [];
 
   return (
     <div className="space-y-8 animate-fade-in">
@@ -65,27 +78,27 @@ const Forecast: React.FC = () => {
           <TrendingUp className="text-accent" size={32} />
           AI-Powered Stock Forecast
         </h2>
-        <p className="text-slate-400">Get AI-generated forecasts for any stock symbol</p>
+        <p className="text-slate-400">Get AI-generated forecasts for any Nifty 50 stock (or the NIFTY index)</p>
       </div>
 
-      {/* Search Box */}
+      {/* Symbol Selector */}
       <div className="bg-secondary/50 border border-slate-700/50 rounded-2xl p-6">
         <div className="flex gap-4 items-end">
           <div className="flex-1">
             <label className="block text-xs text-slate-400 mb-2">Stock Symbol</label>
-            <input
-              type="text"
+            <select
               value={symbol}
-              onChange={(e) => setSymbol(e.target.value.toUpperCase())}
-              onKeyPress={(e) => {
-                if (e.key === 'Enter' && !loading) {
-                  fetchForecast();
-                }
-              }}
-              placeholder="Enter stock symbol (e.g., NIFTY, RELIANCE, TATA)"
+              onChange={(e) => setSymbol(e.target.value)}
               className="w-full bg-slate-800 border border-slate-700 text-white rounded-lg p-3 text-sm focus:outline-none focus:border-accent transition-colors"
               disabled={loading}
-            />
+            >
+              <option value="NIFTY">NIFTY — Nifty 50 Index</option>
+              {NIFTY_50_STOCKS.map((s) => (
+                <option key={s.symbol} value={s.symbol}>
+                  {s.symbol} — {s.name}
+                </option>
+              ))}
+            </select>
           </div>
           <button
             onClick={fetchForecast}
@@ -133,7 +146,7 @@ const Forecast: React.FC = () => {
         <div className="space-y-6 animate-fade-in">
           {/* CHART CARD */}
           <div className="bg-secondary/50 border border-slate-700/50 rounded-2xl p-6">
-            <h3 className="text-xl font-bold text-slate-100 mb-4">📊 Forecast Chart</h3>
+            <h3 className="text-xl font-bold text-slate-100 mb-4">📊 Price History & Forecast</h3>
             <div className="h-[400px] w-full">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={chartData}>
@@ -165,12 +178,23 @@ const Forecast: React.FC = () => {
                   <Tooltip 
                     contentStyle={{ backgroundColor: '#1e293b', borderColor: '#475569', borderRadius: '8px', color: '#f1f5f9' }}
                     labelStyle={{ color: '#94a3b8' }}
-                    formatter={(value: any) => [`₹${Number(value).toLocaleString()}`, 'Predicted Price']}
+                    formatter={(value: any, name: any) => [
+                      `₹${Number(value).toLocaleString()}`,
+                      name, // "Actual Price" or "Predicted Price" from the <Line name> prop
+                    ]}
                   />
                   <Legend />
                   <Line
                     type="monotone"
-                    dataKey="price"
+                    dataKey="actual"
+                    stroke="#22c55e"
+                    strokeWidth={3}
+                    dot={false}
+                    name="Actual Price"
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="forecast"
                     stroke="#3b82f6"
                     strokeWidth={3}
                     dot={false}

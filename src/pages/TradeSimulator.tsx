@@ -34,6 +34,7 @@ const TradeSimulator = () => {
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
   const [loading, setLoading] = useState(false);
+  const [livePrice, setLivePrice] = useState<number | null>(null);
 
   const fetchPortfolio = async () => {
     if (!user) return;
@@ -80,6 +81,32 @@ const TradeSimulator = () => {
     [selectedSymbol]
   );
 
+  // Fetch live quote for currently selected symbol
+  useEffect(() => {
+    let cancelled = false;
+
+    const fetchQuote = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/quote/${selectedSymbol}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        setLivePrice(data.price ?? null);
+      } catch {
+        if (!cancelled) {
+          setLivePrice(null);
+        }
+      }
+    };
+
+    fetchQuote();
+    const id = setInterval(fetchQuote, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [API_BASE, selectedSymbol]);
+
   if (!selectedStock) {
     return <div className="text-slate-300">No stock selected</div>;
   }
@@ -110,7 +137,7 @@ const TradeSimulator = () => {
       return;
     }
 
-    const price = selectedStock.currentPrice;
+    const price = livePrice ?? selectedStock.currentPrice;
     const key = selectedStock.symbol;
 
     setLoading(true);
@@ -239,7 +266,10 @@ const TradeSimulator = () => {
           </form>
 
           <div className="mt-4 text-sm text-slate-400">
-            Current price: <span className="text-slate-200">{formatCurrency(selectedStock.currentPrice)}</span>
+            Current price:{' '}
+            <span className="text-slate-200">
+              {formatCurrency(livePrice ?? selectedStock.currentPrice)}
+            </span>
           </div>
           {error && (
             <div className="mt-3 text-sm text-red-400 bg-red-500/10 border border-red-500/40 rounded-lg p-3">

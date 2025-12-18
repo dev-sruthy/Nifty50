@@ -30,9 +30,18 @@ app.add_middleware(
 # Response Model
 # ----------------------------------------------------
 class ForecastResponse(BaseModel):
-    dates: list[str]
-    prices: list[float]
+    dates: list[str]  # forecast dates
+    prices: list[float]  # forecast prices
+    history_dates: list[str]
+    history_prices: list[float]
     explanation: str
+
+
+class QuoteResponse(BaseModel):
+    symbol: str
+    price: float
+    change: float | None = None
+    change_percent: float | None = None
 
 
 class UserResponse(BaseModel):
@@ -111,7 +120,7 @@ def ollama_generate(prompt: str) -> str:
         response = requests.post(
             "http://localhost:11434/api/generate",
             json={
-                "model": "phi3",
+                "model": "gemma:2b",
                 "prompt": prompt,
                 "stream": True
             },
@@ -342,18 +351,37 @@ def execute_trade_db(user_id: int, symbol: str, ttype: Literal["BUY", "SELL"], s
 @app.get("/api/forecast/{symbol}", response_model=ForecastResponse)
 def forecast(symbol: str, days: int = 60):
 
-    # Map NIFTY to Yahoo symbol
-    yf_symbol = "^NSEI" if symbol.upper() == "NIFTY" else symbol
+    sym = symbol.upper().strip()
 
-    # DOWNLOAD FIXED CODE (YOUR MISSING PARENTHESIS WAS HERE)
+    # Map to Yahoo Finance ticker:
+    # - NIFTY index -> ^NSEI
+    # - Other symbols default to NSE tickers SYMBOL.NS
+    if sym == "NIFTY":
+        yf_symbol = "^NSEI"
+    else:
+        yf_symbol = f"{sym}.NS"
+
+    # Primary download attempt
     data = yf.download(
         yf_symbol,
         period="3y",
         interval="1d",
         auto_adjust=True,
         progress=False,
-        threads=False
+        threads=False,
     )
+
+    # Fallback: try raw symbol if .NS fails
+    if data is None or data.empty:
+        fallback_symbol = sym
+        data = yf.download(
+            fallback_symbol,
+            period="3y",
+            interval="1d",
+            auto_adjust=True,
+            progress=False,
+            threads=False,
+        )
 
     if data is None or data.empty:
         raise HTTPException(status_code=400, detail="Yahoo Finance returned no data.")
@@ -414,8 +442,14 @@ def forecast(symbol: str, days: int = 60):
         last_window = [next_price] + last_window[:-1]
         current_date = next_date
 
-    # LLM EXPLANATION
-    recent: pd.Series = close.tail(10)
+    # Build history arrays (e.g., last 120 trading days)
+    HISTORY_DAYS = 120
+    history_slice = close.tail(HISTORY_DAYS)
+    history_dates = [pd.Timestamp(idx).strftime("%Y-%m-%d") for idx in history_slice.index]
+    history_prices = [float(v) for v in history_slice.values]
+
+    # LLM EXPLANATION (use recent history + forecast)
+    recent: pd.Series = history_slice.tail(10)
     pct_change = (future_prices[-1] - future_prices[0]) / future_prices[0] * 100
 
     history_lines = []
@@ -456,7 +490,52 @@ Explain:
     return ForecastResponse(
         dates=future_dates,
         prices=[round(p, 2) for p in future_prices],
+        history_dates=history_dates,
+        history_prices=[round(p, 2) for p in history_prices],
         explanation=explanation,
+    )
+
+
+@app.get("/api/quote/{symbol}", response_model=QuoteResponse)
+def quote(symbol: str):
+    """
+    Return a near real-time quote using Yahoo Finance.
+    For Indian stocks we map SYMBOL -> SYMBOL.NS by default.
+    Special case: NIFTY -> ^NSEI index symbol.
+    """
+    sym = symbol.upper().strip()
+    if sym == "NIFTY":
+        yf_symbol = "^NSEI"
+    else:
+        # Default to NSE suffix for stock symbols
+        yf_symbol = f"{sym}.NS"
+
+    ticker = yf.Ticker(yf_symbol)
+
+    # Use last two closes to compute 1-day change
+    hist = ticker.history(period="2d", interval="1d", auto_adjust=True)
+    if hist is None or hist.empty:
+        raise HTTPException(status_code=400, detail="Yahoo Finance returned no data for symbol.")
+
+    close_series = hist["Close"].dropna()
+    if close_series.empty:
+        raise HTTPException(status_code=400, detail="No close prices available.")
+
+    latest_price = float(close_series.iloc[-1])
+
+    change = None
+    change_percent = None
+    if len(close_series) >= 2:
+        prev_close = float(close_series.iloc[-2])
+        change = latest_price - prev_close
+        if prev_close != 0:
+            change_percent = change / prev_close * 100.0
+
+    return QuoteResponse(
+        symbol=sym,
+        price=round(latest_price, 2),
+        change=round(change, 2) if change is not None else None,
+        change_percent=round(change_percent, 2) if change_percent is not None else None,
     )
 
 
